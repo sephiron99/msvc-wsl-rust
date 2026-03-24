@@ -1,6 +1,9 @@
 #!/bin/bash
 
-script_path="$(dirname "${BASH_SOURCE[0]}")"
+# script_path="$(dirname "${BASH_SOURCE[0]}")"
+script_path="$(realpath "${BASH_SOURCE[0]}")"
+script_path="$(dirname "${script_path}")"
+
 source "$script_path/config.sh"
 
 host=x64

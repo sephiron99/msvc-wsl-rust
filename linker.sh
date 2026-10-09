@@ -45,8 +45,14 @@ done
 log_file="$(path_l2w "$script_path/last-linking.log")"
 
 commands_file="$(path_l2w "$script_path/last-linking-args.txt")"
+echo $commands_file
 echo "$args" > "$script_path/last-linking-args.txt"
 
 echo "& \"$linker_exec\" \"@$commands_file\" | Out-file \"$log_file\"" >> "$script_path/last-linking.ps1"
+# link.exe 종료코드를 powershell 프로세스 종료코드로 전파한다.
+# (네이티브 명령을 Out-File로 파이프해도 $LASTEXITCODE 에는 link.exe 의 종료코드가 남는다.)
+echo 'exit $LASTEXITCODE' >> "$script_path/last-linking.ps1"
 
 powershell.exe -ExecutionPolicy Bypass -Command "$script_path/last-linking.ps1"
+# powershell(=link.exe)의 종료코드를 래퍼의 종료코드로 전파 → 링크 실패 시 rustc/cargo 가 인지한다.
+exit $?

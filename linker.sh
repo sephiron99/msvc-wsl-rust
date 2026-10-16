@@ -26,6 +26,8 @@ args_file="$work_dir/linking-args.txt"
 log_file_local="$work_dir/linking.log"
 
 echo "\$env:LIB=\"$sdk_libs;$ucrt_libs;$crt_libs\"" > "$script_file"
+# /MANIFEST:EMBED 등에서 link.exe가 부르는 mt.exe, rc.exe는 Windows SDK의 bin 디렉터리에 있다.
+echo "\$env:PATH=\"$kits_path\\10\\bin\\$sdk_version\\$host;\$env:PATH\"" >> "$script_file"
 
 path_l2w()
 {
@@ -35,11 +37,17 @@ path_l2w()
 args=""
 # rustc가 /OUT: 으로 넘긴 결과물의 Linux 경로. link 뒤에 실행 권한을 주는 데 쓴다.
 output_file=""
+# /MANIFESTINPUT: 으로 받은 매니페스트의 Linux 경로. 응답 파일에 넣지 않고 따로 넘긴다.
+manifest_inputs=()
 
 for v in "$@"; do
         case "$v" in
                 /OUT:*) output_file="${v#/OUT:}" ;;
         esac
+        if [[ "${v^^}" == /MANIFESTINPUT:* ]]; then
+                manifest_inputs+=("${v#*:}")
+                continue
+        fi
         num_of_slash=`tr -dc '/' <<< "$v" | wc -c`
         num_of_colon=`tr -dc ':' <<< "$v" | wc -c`
         if [ "$num_of_slash" -gt "1" ] && [ "$num_of_colon" -eq "0" ]; then
@@ -59,10 +67,29 @@ log_file="$(path_l2w "$log_file_local")"
 commands_file="$(path_l2w "$args_file")"
 echo "$args" > "$args_file"
 
-echo "& \"$linker_exec\" \"@$commands_file\" | Out-file \"$log_file\"" >> "$script_file"
+# link.exe는 \\wsl$ 경로의 매니페스트를 mt.exe에 넘길 때 앞에 \\?\ 를 잘못 붙여 mt.exe가 파일을
+# 읽지 못한다. 그래서 매니페스트를 Windows 쪽 임시 디렉터리에 복사해 로컬 경로로 넘긴다.
+manifest_args=""
+if [ "${#manifest_inputs[@]}" -gt 0 ]; then
+        echo '$manifest_dir = Join-Path $env:TEMP ("msvc-linker-" + [guid]::NewGuid())' >> "$script_file"
+        echo 'New-Item -ItemType Directory $manifest_dir | Out-Null' >> "$script_file"
+        i=0
+        for m in "${manifest_inputs[@]}"; do
+                name="$i-$(basename "$m")"
+                echo "Copy-Item -LiteralPath '$(path_l2w "$m")' \"\$manifest_dir\\$name\"" >> "$script_file"
+                manifest_args="$manifest_args \"/MANIFESTINPUT:\$manifest_dir\\$name\""
+                i=$((i + 1))
+        done
+fi
+
+echo "& \"$linker_exec\" \"@$commands_file\"$manifest_args | Out-file \"$log_file\"" >> "$script_file"
 # link.exe 종료코드를 powershell 프로세스 종료코드로 전파한다.
 # (네이티브 명령을 Out-File로 파이프해도 $LASTEXITCODE 에는 link.exe 의 종료코드가 남는다.)
-echo 'exit $LASTEXITCODE' >> "$script_file"
+echo '$status = $LASTEXITCODE' >> "$script_file"
+if [ "${#manifest_inputs[@]}" -gt 0 ]; then
+        echo 'Remove-Item -Recurse -Force $manifest_dir' >> "$script_file"
+fi
+echo 'exit $status' >> "$script_file"
 
 powershell.exe -ExecutionPolicy Bypass -Command "$script_file"
 status=$?

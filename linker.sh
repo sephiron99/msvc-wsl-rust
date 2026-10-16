@@ -7,7 +7,37 @@ script_path="$(dirname "${script_path}")"
 source "$script_path/config.sh"
 
 host=x64
-target=${TARGET_ARCH:=x64}
+
+# 대상 아키텍처. linker-x86.sh, linker-x64.sh가 TARGET_ARCH를 정해 주지 않으면(예: PATH의 link.exe로
+# 불렸을 때) rustc가 넘긴 오브젝트 파일의 COFF machine 값으로 정한다.
+coff_arch()
+{
+        local machine
+        machine="$(od -An -tx2 -N2 "$1" 2>/dev/null | tr -d ' ')"
+        # bigobj 형식은 첫 2바이트가 0이고 machine 값이 6바이트 뒤에 있다.
+        if [ "$machine" = "0000" ]; then
+                machine="$(od -An -tx2 -j6 -N2 "$1" 2>/dev/null | tr -d ' ')"
+        fi
+        case "$machine" in
+                014c) echo x86 ;;
+                8664) echo x64 ;;
+                aa64) echo arm64 ;;
+        esac
+}
+
+if [ -z "$TARGET_ARCH" ]; then
+        for v in "$@"; do
+                case "$v" in
+                        *.o|*.obj) [ -f "$v" ] && TARGET_ARCH="$(coff_arch "$v")" ;;
+                esac
+                [ -n "$TARGET_ARCH" ] && break
+        done
+fi
+if [ -z "$TARGET_ARCH" ]; then
+        echo "linker.sh: 오브젝트 파일에서 대상 아키텍처를 알아내지 못했다. TARGET_ARCH=x86|x64|arm64로 지정한다." >&2
+        exit 1
+fi
+target=$TARGET_ARCH
 
 msvc_path="C:\\Program Files (x86)\\Microsoft Visual Studio\\$vs_version\\BuildTools\\VC\\Tools\\MSVC"
 kits_path="C:\\Program Files (x86)\\Windows Kits"
